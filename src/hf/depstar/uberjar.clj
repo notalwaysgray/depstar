@@ -2,8 +2,8 @@
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.pprint :refer [pprint]]
-   [clojure.string :as string])
+   [clojure.string :as string]
+   [clojure.tools.logging :as tools.logging])
   (:import
    (java.io File InputStream PushbackReader)
    (java.nio.file CopyOption LinkOption OpenOption
@@ -46,9 +46,9 @@
         (throw
          (ex-info
           (str "depstar " setting " should be true or false")
-          {:level    level
-           :env      (System/getenv env-setting)
-           :property (System/getProperty prop-setting)}))))))
+          {::level    level
+           ::env      (System/getenv env-setting)
+           ::property (System/getProperty prop-setting)}))))))
 
 (defonce ^FileSystem FS
   (FileSystems/getDefault))
@@ -90,9 +90,12 @@
   (fn [filename in target]
     (let [stategy (clash-strategy filename)]
       (when-not *suppress-clash*
-        (pprint {:warning  "clashing jar item"
-                 :path     filename
-                 :strategy stategy}))
+        (tools.logging/warn
+         (with-out-str
+           (pr
+            {::message  "clashing jar item"
+             ::path     filename
+             ::strategy stategy}))))
       stategy)))
 
 (defmethod clash
@@ -202,10 +205,13 @@
                  (reset! multi-release? true))
                (copy! name inputstream target last-mod)
                (catch Throwable t
-                 (pprint {:error     "unable to copy file"
-                          :name      name
-                          :exception (class t)
-                          :message   (.getMessage t)})
+                 (tools.logging/error
+                  (with-out-str
+                    (pr
+                     {::message           "unable to copy file"
+                      ::filename          name
+                      ::exception-class   (class t)
+                      ::exception-message (.getMessage t)})))
                  (swap! errors inc))))))))))
 
 (defn reify-file-visitor
@@ -232,7 +238,7 @@
         FileVisitResult/CONTINUE))
 
     (visitFileFailed [_ p ioexc]
-      (throw (ex-info "Visit File Failed" {:p p} ioexc)))))
+      (throw (ex-info "visitFileFailed" {:p p} ioexc)))))
 
 (defn copy-directory
   [^Path src ^Path dest]
@@ -252,15 +258,21 @@
 (defmethod copy-source*
   :not-found
   [src _dest _options]
-  (pprint {:warning "could not find classpath entry"
-           :path    src}))
+  (tools.logging/warn
+   (with-out-str
+     (pr
+      {::message "could not find classpath entry"
+       ::path    src}))))
 
 (defmethod copy-source*
   :unknown
   [src _dest _options]
   (when (excluded? src)
-    (pprint {:warning "ignoring unknown file type"
-             :path    src})))
+    (tools.logging/warn
+     (with-out-str
+       (pr
+        {::message "ignoring unknown file type"
+         ::path    src})))))
 
 (defn copy-source
   [src dest options]
@@ -358,12 +370,12 @@
 
     (when aot?
       (try
-        (println "Compiling" main-class "...")
+        (tools.logging/trace (str "compiling" main-class))
         (binding [*compile-path* (str tmp-c-dir)]
           (compile (symbol main-class)))
         (catch Throwable t
           (throw (ex-info
-                  (str "Compilation of " main-class " failed!")
+                  (str "compilation of " main-class " failed!")
                   (dissoc options :pom-file)
                   t)))))
 
@@ -371,7 +383,7 @@
       (let [tmp (.getPath zfs "/" STRING_OPTION)]
         (reset! errors 0)
         (reset! multi-release? false)
-        (println "Building" (name jar) "jar:" dest)
+        (tools.logging/trace (str "building " (name jar) "jar: " dest))
         (run! #(copy-source % tmp options) classpaths)
         (when (and (not no-pom) (.exists pom-file))
           (copy-pom tmp options))))
@@ -382,7 +394,7 @@
       (Files/move jar-path dest-path copy-opts))
 
     (when (pos? @errors)
-      (println "\nCompleted with errors!"))))
+      (tools.logging/error "completed with errors!"))))
 
 (defn help []
   (println "library usage:")
@@ -411,11 +423,11 @@
         suppress   (some #(#{"-S" "--suppress-clash"} %) args)
         aot-main   (if main-class
                      (cond
-                       (= :thin (:jar opts))    (println "Ignoring -m / --main because a 'thin' JAR was requested!")
-                       no-pom                   (println "Ignoring -m / --main because -n / --no-pom was specified!")
-                       (not (.exists pom-file)) (println "Ignoring -m / --main because no 'pom.xml' file is present!")
+                       (= :thin (:jar opts))    (tools.logging/warn "Ignoring -m / --main because a 'thin' JAR was requested!")
+                       no-pom                   (tools.logging/warn "Ignoring -m / --main because -n / --no-pom was specified!")
+                       (not (.exists pom-file)) (tools.logging/warn "Ignoring -m / --main because no 'pom.xml' file is present!")
                        :else                    {:aot aot :main-class main-class})
-                     (when aot (println "Ignoring -C / --compile because -m / --main was not specified!")))]
+                     (when aot (tools.logging/warn "Ignoring -C / --compile because -m / --main was not specified!")))]
     (->>
      {:pom-file pom-file :no-pom no-pom :suppress suppress}
      (merge opts aot-main)
