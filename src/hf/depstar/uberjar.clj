@@ -347,10 +347,10 @@
         (copy! "pom.xml" is dest last-mod)))))
 
 (defn run
-  [{:keys [aot dest jar main-class no-pom ^File pom-file suppress classpath]
+  [{:keys [aot dest jar main-class no-pom ^File pom-file classpath]
+    :as   options
     :or   {classpath (System/getProperty "java.class.path")
-           jar       :uber}
-    :as   options}]
+           jar       :uber}}]
 
   (let [aot?       (and aot main-class (not no-pom) (.exists pom-file))
         tmp-c-dir  (when aot? (Files/createTempDirectory "depstarc" FILE_ATTRIBUTE_OPTION))
@@ -393,8 +393,11 @@
         (.. parent toFile mkdirs))
       (Files/move jar-path dest-path copy-opts))
 
-    (when (pos? @errors)
-      (tools.logging/error "completed with errors!"))))
+    (if (pos? @errors)
+      (do
+        (tools.logging/error "completed with errors!")
+        {::exit-code 1})
+      {::exit-code 0})))
 
 (defn help []
   (println "library usage:")
